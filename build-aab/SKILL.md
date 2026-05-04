@@ -65,7 +65,66 @@ git add app.json
 git commit -m "chore: bump version to [versionName] (versionCode [versionCode])"
 ```
 
-הערה: `android/` נמצא ב-`.gitignore` — אין צורך לנסות להוסיפו ל-git.
+הערה: תיקיית `android/` **מנוהלת ב-git** בפרויקט זה — אין לשנות זאת.
+
+## שלב 5.5 – אחרי expo prebuild --clean (רק אם הורץ במפורש!)
+
+> ⚠️ **אין להריץ `expo prebuild --clean` כחלק שגרתי מהבילד.**
+> הפקודה הזו גורמת לנזק נרחב ודרשה שיקום ארוך בעבר.
+> יש להריצה **רק** כאשר המשתמש מבקש זאת במפורש, למשל לתיקון אייקון.
+> בבילד רגיל — דלג על שלב זה לחלוטין.
+
+אם הורץ `expo prebuild --clean` לפני הבילד, חובה לבצע את הבדיקות הבאות לפני הבניה — הפקודה מוחקת ומשחזרת את כל תיקיית `android/` ופוגעת ב-3 דברים:
+
+### א – שחזר את keystore המקורי מ-git
+
+```bash
+git show HEAD:android/app/bodybuddy-release.keystore > android/app/bodybuddy-release.keystore
+```
+
+### ב – שחזר את פרטי ה-signing ב-gradle.properties
+
+בדוק מה ה-git מכיל:
+```bash
+git show HEAD:android/gradle.properties | grep -A5 "BODYBUDDY\|STORE\|KEY"
+```
+ואז עדכן את `android/gradle.properties` הנוכחי עם אותם ערכים:
+```
+BODYBUDDY_STORE_FILE=bodybuddy-release.keystore
+BODYBUDDY_STORE_PASSWORD=[מה-git]
+BODYBUDDY_KEY_ALIAS=bodybuddy
+BODYBUDDY_KEY_PASSWORD=[מה-git]
+```
+
+### ג – תקן את signing config ב-build.gradle
+
+`expo prebuild` מוחק את ה-`release` signingConfig ומחליף אותו ב-`debug`. יש לשחזר ידנית ב-`android/app/build.gradle`:
+
+```groovy
+signingConfigs {
+    debug { ... }
+    release {
+        storeFile file(BODYBUDDY_STORE_FILE)
+        storePassword BODYBUDDY_STORE_PASSWORD
+        keyAlias BODYBUDDY_KEY_ALIAS
+        keyPassword BODYBUDDY_KEY_PASSWORD
+    }
+}
+buildTypes {
+    release {
+        signingConfig signingConfigs.release   // לא signingConfigs.debug!
+        ...
+    }
+}
+```
+
+### ד – הסר buildDir ישן אם קיים
+
+בדוק אם `android/build.gradle` מכיל שורה כמו:
+```groovy
+buildDir = "C:/tmp/bb-build/..."
+```
+אם כן — **מחק אותה**. היא גורמת לכשלון כי התיקייה לא קיימת.
 
 ## שלב 6 – בדיקות מקדימות לפני בילד
 
@@ -153,6 +212,16 @@ Remove-Item 'C:\Users\i0548\Documents\BodyBuddy\BodyBuddy-client\android\app\bui
 
 - **אם השגיאה היא `AccessDeniedException`** → חזור לשלב 6ב (Defender לא עודכן)
 - **אם השגיאה היא `Could not download` / `Could not GET`** → בעיית רשת, בדוק חיבור
+- **אם השגיאה היא `Could not get unknown property 'BODYBUDDY_STORE_FILE'`** → פרטי ה-signing חסרים ב-`android/gradle.properties`. חזור לשלב 5.5ב ושחזר מ-git.
+- **אם השגיאה היא `Filename longer than 260 characters`** → ninja גרסה ישנה. הפתרון הקבוע כבר בוצע (ninja 1.12.1 הותקן ב-`C:\Users\i0548\AppData\Local\Android\Sdk\cmake\3.22.1\bin\ninja.exe`). אם הבעיה חוזרת (למשל אחרי עדכון NDK), הרץ:
+  ```powershell
+  $zipPath = "$env:TEMP\ninja-win.zip"
+  Invoke-WebRequest -Uri "https://github.com/ninja-build/ninja/releases/download/v1.12.1/ninja-win.zip" -OutFile $zipPath -UseBasicParsing
+  Expand-Archive -Path $zipPath -DestinationPath "$env:TEMP\ninja-new" -Force
+  Copy-Item "$env:TEMP\ninja-new\ninja.exe" "C:\Users\i0548\AppData\Local\Android\Sdk\cmake\3.22.1\bin\ninja.exe" -Force
+  Remove-Item 'C:\Users\i0548\Documents\BodyBuddy\BodyBuddy-client\android\app\.cxx' -Recurse -Force -ErrorAction SilentlyContinue
+  ```
+  ואז חזור להרצת הבילד.
 - **אחרת** → הצג את השגיאה המלאה למשתמש
 
 ## שלב 8 – סיכום
